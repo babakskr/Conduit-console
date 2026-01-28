@@ -7,7 +7,7 @@
 # Copyright (C) 2026 Babak Sorkhpour
 # Written by Dr. Babak Sorkhpour with help of ChatGPT
 #
-# Version: 0.1.2
+# Version: 0.1.4
 #
 # GitHub workflow (recommended):
 #   - Keep this file as the single source of truth
@@ -25,7 +25,7 @@ set -u -o pipefail
 IFS=$'\n\t'
 
 APP_NAME="Conduit Console Manager"
-APP_VER="0.1.2"
+APP_VER="0.1.4"
 
 # Upstream conduit repo (for downloads)
 CONDUIT_REPO="ssmirr/conduit"
@@ -518,9 +518,32 @@ native_view_logs() {
 
 
 # ------------------------- Docker ------------------------------------------------
+
+# Docker/Compose configuration
+DOCKER_TEMPLATE_DIR="/opt/conduit-docker"               # git clone of upstream docker files
+DOCKER_TEMPLATE_GIT_URL="https://github.com/ssmirr/conduit.git"
+DOCKER_INSTANCES_ROOT="/opt/conduit-docker-instances"   # per-instance compose projects
+DOCKER_UNIT_SUFFIX="-docker.service"                    # e.g., conduit250-docker.service
+
+compose_cmd() {
+  # Prefer docker compose plugin; fallback to docker-compose.
+  if docker compose version >/dev/null 2>&1; then
+    echo "docker compose"
+  elif has docker-compose; then
+    echo "docker-compose"
+  else
+    echo ""
+  fi
+}
+
 docker_available() { has docker && docker info >/dev/null 2>&1; }
 
+# Backward-compatible helpers required by the Live Dashboard (DO NOT remove):
+# - list_docker_conduits
+# - docker_state
+# - last_stats_docker
 list_docker_conduits() {
+  # Any container whose name starts with "conduit" is considered relevant.
   docker ps -a --format '{{.Names}}' 2>/dev/null | grep -i '^conduit' || true
 }
 
@@ -534,26 +557,348 @@ last_stats_docker() {
   docker logs --tail 200 "$c" 2>/dev/null | grep -F "[STATS]" | tail -n1 || true
 }
 
-docker_follow_logs() {
-  if ! docker_available; then
-    warn "Docker not available or daemon not running."
+compose_available() {
+  local cc
+  cc="$(compose_cmd)"
+  [[ -n "$cc" ]]
+}
+
+ensure_docker_template() {
+  # Ensure DOCKER_TEMPLATE_DIR is a git checkout of DOCKER_TEMPLATE_GIT_URL
+  # Requirement: before any docker changes, fetch latest from git.
+  need_root || return 1
+  if ! has git; then err "git is required."; return 1; fi
+
+  if [[ ! -d "${DOCKER_TEMPLATE_DIR}/.git" ]]; then
+    mkdir -p "${DOCKER_TEMPLATE_DIR}" >/dev/null 2>&1 || true
+    if [[ -z "$(ls -A "${DOCKER_TEMPLATE_DIR}" 2>/dev/null || true)" ]]; then
+      ok "Cloning docker template repo into ${DOCKER_TEMPLATE_DIR}..."
+      if ! git clone "${DOCKER_TEMPLATE_GIT_URL}" "${DOCKER_TEMPLATE_DIR}" >/dev/null 2>&1; then
+        err "git clone failed."
+        return 1
+      fi
+    else
+      err "${DOCKER_TEMPLATE_DIR} exists but is not a git repo (and not empty)."
+      err "Fix: move it aside or initialize git there."
+      return 1
+    fi
+  fi
+
+  ok "Updating docker template repo (git pull --ff-only)..."
+  if ! git -C "${DOCKER_TEMPLATE_DIR}" pull --ff-only >/dev/null 2>&1; then
+    err "git pull failed (check local changes / connectivity)."
+    return 1
+  fi
+  return 0
+}
+
+docker_update_all_instances() {
+  # Requirement: every docker change must refresh from git and then update all services.
+  need_root || return 1
+  docker_available || { err "Docker not available."; return 1; }
+  compose_available || { err "Docker Compose not available (docker compose / docker-compose missing)."; return 1; }
+
+  ensure_docker_template || return 1
+
+  mkdir -p "${DOCKER_INSTANCES_ROOT}" >/dev/null 2>&1 || true
+
+  local cc
+  cc="$(compose_cmd)"
+
+  local dir any=0
+  for dir in "${DOCKER_INSTANCES_ROOT}"/*; do
+    [[ -d "$dir" ]] || continue
+    [[ -f "${dir}/docker-compose.yml" ]] || continue
+    any=1
+    ok "Updating instance: $(basename "$dir")"
+    ( cd "$dir" && ${cc} pull >/dev/null 2>&1 || true )
+    ( cd "$dir" && ${cc} up -d --build >/dev/null 2>&1 || true )
+  done
+
+  if (( any == 0 )); then
+    warn "No docker instances found under ${DOCKER_INSTANCES_ROOT}."
+  fi
+  return 0
+}
+
+list_docker_instances() {
+  mkdir -p "${DOCKER_INSTANCES_ROOT}" >/dev/null 2>&1 || true
+  ls -1 "${DOCKER_INSTANCES_ROOT}" 2>/dev/null | sed '/^$/d' || true
+}
+
+instance_unit_name() {
+  local inst="$1"
+  echo "${inst}${DOCKER_UNIT_SUFFIX}"
+}
+
+create_docker_unit_file() {
+  local inst="$1"
+  local unit
+  unit="$(instance_unit_name "$inst")"
+
+  cat > "${UNIT_DIR}/${unit}" <<EOF
+[Unit]
+Description=Conduit Docker instance ${inst}
+After=docker.service network-online.target
+Wants=docker.service network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=${DOCKER_INSTANCES_ROOT}/${inst}
+ExecStart=/usr/bin/env bash -lc '$(compose_cmd) up -d --build'
+ExecStop=/usr/bin/env bash -lc '$(compose_cmd) down'
+TimeoutStartSec=0
+
+[Install]
+WantedBy=multi-user.target
+EOF
+}
+
+docker_create_instance() {
+  need_root || return 0
+  if ! docker_available; then err "Docker not available."; pause_enter; return 0; fi
+  if ! compose_available; then err "Docker Compose not available."; pause_enter; return 0; fi
+
+  # Requirement: before changes, fetch latest from git.
+  if ! ensure_docker_template; then
     pause_enter
     return 0
   fi
-  local -a cs
-  mapfile -t cs < <(list_docker_conduits)
-  local c
-  c="$(pick_from_list "Pick docker conduit container (docker logs -f)" "${cs[@]}")"
-  [[ -z "${c}" ]] && return 0
 
   header
-  printf "%sFollowing docker logs: %s%s\n\n" "${C_BOLD}" "${c}" "${C_RESET}"
-  docker logs --tail 20 "${c}" 2>/dev/null || true
-  printf "\n(CTRL+C to return)\n\n"
-  docker logs -f "${c}"
+  printf "%sCreate New Docker Instance%s
+
+" "${C_BOLD}" "${C_RESET}"
+  printf "%sInstance pattern:%s conduit<NUM> (compose project + systemd unit)
+
+" "${C_DIM}" "${C_RESET}"
+
+  local num
+  while true; do
+    read -r -p "Instance number (e.g., 250) (0=Back): " num </dev/tty || true
+    [[ "${num:-}" == "0" ]] && return 0
+    [[ "${num:-}" =~ ^[0-9]+$ ]] && break
+  done
+
+  local inst="conduit${num}"
+  local dir="${DOCKER_INSTANCES_ROOT}/${inst}"
+
+  if [[ -d "$dir" ]]; then
+    warn "Instance directory already exists: $dir"
+    pause_enter
+    return 0
+  fi
+
+  mkdir -p "$dir" >/dev/null 2>&1 || true
+
+  # Copy template compose file
+  if [[ ! -f "${DOCKER_TEMPLATE_DIR}/docker-compose.yml" ]]; then
+    err "Template docker-compose.yml not found in ${DOCKER_TEMPLATE_DIR}."
+    pause_enter
+    return 0
+  fi
+
+  cp -a "${DOCKER_TEMPLATE_DIR}/docker-compose.yml" "$dir/docker-compose.yml" >/dev/null 2>&1 || true
+
+  # Optional: copy example env if present
+  if [[ -f "${DOCKER_TEMPLATE_DIR}/.env" ]]; then
+    cp -a "${DOCKER_TEMPLATE_DIR}/.env" "$dir/.env" >/dev/null 2>&1 || true
+  fi
+
+  # Create systemd unit for this instance
+  create_docker_unit_file "$inst"
+  systemctl daemon-reload >/dev/null 2>&1 || true
+  systemctl enable --now "$(instance_unit_name "$inst")" >/dev/null 2>&1 || true
+
+  # Apply updates to all instances (requirement)
+  docker_update_all_instances >/dev/null 2>&1 || true
+
+  ok "Created and started docker instance: ${inst}"
+  pause_enter
 }
 
-# ------------------------- Network throughput (Mbps) -----------------------------
+docker_single_action() {
+  need_root || return 0
+  if ! docker_available; then err "Docker not available."; pause_enter; return 0; fi
+
+  # Requirement: fetch latest from git and update all services BEFORE changes
+  ensure_docker_template || { pause_enter; return 0; }
+  docker_update_all_instances >/dev/null 2>&1 || true
+
+  local -a insts
+  mapfile -t insts < <(list_docker_instances)
+  local inst
+  inst="$(pick_from_list "Pick docker instance" "${insts[@]}")"
+  [[ -z "$inst" ]] && return 0
+
+  local action
+  action="$(pick_from_list "Action for ${inst}" "start" "stop" "restart" "status")"
+  [[ -z "$action" ]] && return 0
+
+  local unit
+  unit="$(instance_unit_name "$inst")"
+
+  header
+  printf "%sDocker Instance Action%s
+
+" "${C_BOLD}" "${C_RESET}"
+  printf "Instance: %s
+Unit:     %s
+Action:   %s
+
+" "$inst" "$unit" "$action"
+
+  local out rc
+
+  case "$action" in
+    start)
+      out="$(systemctl start "$unit" 2>&1)"; rc=$? ;;
+    stop)
+      out="$(systemctl stop "$unit" 2>&1)"; rc=$? ;;
+    restart)
+      out="$(systemctl restart "$unit" 2>&1)"; rc=$? ;;
+    status)
+      systemctl status "$unit" --no-pager
+      pause_enter
+      return 0
+      ;;
+    *)
+      out="Unknown action"; rc=2 ;;
+  esac
+
+  systemd_unit_report "$unit" "$rc" "$out"
+
+  # Requirement: update all services after any change
+  docker_update_all_instances >/dev/null 2>&1 || true
+
+  pause_enter
+}
+
+docker_delete_instance() {
+  need_root || return 0
+  if ! docker_available; then err "Docker not available."; pause_enter; return 0; fi
+  if ! compose_available; then err "Docker Compose not available."; pause_enter; return 0; fi
+
+  # Requirement: fetch latest from git and update all services BEFORE changes
+  ensure_docker_template || { pause_enter; return 0; }
+  docker_update_all_instances >/dev/null 2>&1 || true
+
+  local -a insts
+  mapfile -t insts < <(list_docker_instances)
+  local inst
+  inst="$(pick_from_list "Pick docker instance to DELETE" "${insts[@]}")"
+  [[ -z "$inst" ]] && return 0
+
+  local dir="${DOCKER_INSTANCES_ROOT}/${inst}"
+  local unit
+  unit="$(instance_unit_name "$inst")"
+
+  header
+  warn "This will STOP -> DISABLE -> REMOVE docker instance and volumes:"
+  printf "  - Instance: %s
+  - Directory: %s
+  - Unit: %s
+
+" "$inst" "$dir" "$unit"
+
+  local confirm
+  read -r -p "Type DELETE to confirm: " confirm </dev/tty || true
+  [[ "${confirm:-}" != "DELETE" ]] && { ok "Canceled."; pause_enter; return 0; }
+
+  local out="" rc=0
+
+  # Always stop first
+  out+="$(systemctl stop "$unit" 2>&1)"; rc=$?
+
+  # Disable
+  out+=$'
+'"$(systemctl disable --now "$unit" 2>&1)"; (( rc == 0 )) || true
+
+  # Compose down with volume removal (physical volumes)
+  local cc
+  cc="$(compose_cmd)"
+  if [[ -d "$dir" && -f "${dir}/docker-compose.yml" ]]; then
+    out+=$'
+'"$( ( cd "$dir" && ${cc} down -v --remove-orphans ) 2>&1 )"; (( rc == 0 )) || true
+  fi
+
+  # Remove unit file and directory
+  rm -f "${UNIT_DIR}/${unit}" >/dev/null 2>&1 || true
+  rm -rf "${dir}" >/dev/null 2>&1 || true
+
+  out+=$'
+'"$(systemctl daemon-reload 2>&1)"; (( rc == 0 )) || true
+
+  printf "
+"
+  hr
+  printf "%sDocker Delete Report:%s %s
+" "${C_BOLD}" "${C_RESET}" "$inst"
+  hr
+
+  if [[ -f "${UNIT_DIR}/${unit}" ]]; then
+    err "Unit file still exists: ${UNIT_DIR}/${unit}"
+  else
+    ok "Unit file removed: ${UNIT_DIR}/${unit}"
+  fi
+
+  if [[ -d "$dir" ]]; then
+    err "Instance directory still exists: $dir"
+  else
+    ok "Instance directory removed: $dir"
+  fi
+
+  if [[ -n "$out" ]]; then
+    printf "
+%sOutput:%s
+%s
+" "${C_DIM}" "${C_RESET}" "$out"
+  fi
+
+  # Requirement: update all services after change
+  docker_update_all_instances >/dev/null 2>&1 || true
+
+  pause_enter
+}
+
+docker_view_logs_last10() {
+  # Requirement: only show last 10 lines (no follow)
+  if ! docker_available; then
+    err "Docker not available or daemon not running."
+    pause_enter
+    return 0
+  fi
+
+  local cc
+  cc="$(compose_cmd)"
+
+  # Prefer managed instances if available
+  local -a insts
+  mapfile -t insts < <(list_docker_instances)
+
+  local target
+  target="$(pick_from_list "Pick docker instance (last 10 logs)" "${insts[@]}")"
+  [[ -z "$target" ]] && return 0
+
+  local dir="${DOCKER_INSTANCES_ROOT}/${target}"
+
+  header
+  printf "%sLast 10 log lines:%s %s
+
+" "${C_BOLD}" "${C_RESET}" "$target"
+
+  # Compose logs if possible; fallback to docker logs for container name == target
+  if [[ -n "$cc" && -d "$dir" && -f "${dir}/docker-compose.yml" ]]; then
+    ( cd "$dir" && ${cc} logs --tail 10 2>/dev/null ) || true
+  else
+    docker logs --tail 10 "$target" 2>/dev/null || true
+  fi
+
+  pause_enter
+}
+
+# ------------------------- Network throughput (Mbps) ----------------------------- (Mbps) -----------------------------
 read_iface_bytes() {
   local ifc="$1"
   local rx_file="/sys/class/net/${ifc}/statistics/rx_bytes"
@@ -874,19 +1219,35 @@ menu_native() {
 menu_docker() {
   while true; do
     header
-    printf "%sDocker Menu%s\n\n" "${C_BOLD}" "${C_RESET}"
-    echo "1) Follow docker logs (docker logs -f)"
+    printf "%sDocker Menu%s
+
+" "${C_BOLD}" "${C_RESET}"
+    echo "1) Create docker instance (compose + systemd)"
+    echo "2) Start/Stop/Restart (single instance)"
+    echo "3) Delete docker instance (container + unit + volumes + dir)"
+    echo "4) Show last 10 docker log lines"
+    echo "5) Update all docker instances (git pull + compose up -d --build)"
     echo "0) Back"
     echo
     local c
     read -r -p "Choice: " c </dev/tty || true
     case "${c:-}" in
-      1) docker_follow_logs ;;
+      1) docker_create_instance ;;
+      2) docker_single_action ;;
+      3) docker_delete_instance ;;
+      4) docker_view_logs_last10 ;;
+      5)
+        need_root || { pause_enter; continue; }
+        ensure_docker_template || { pause_enter; continue; }
+        docker_update_all_instances
+        pause_enter
+        ;;
       0) return 0 ;;
       *) ;;
     esac
   done
 }
+
 
 main_menu() {
   mkdir -p "${RUN_ROOT}" >/dev/null 2>&1 || true
