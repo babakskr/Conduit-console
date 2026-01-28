@@ -1,0 +1,25 @@
+name: Create Release
+
+on:
+  push:
+    tags:
+      - "v*" # اجرا شدن خودکار ورک‌فلو هنگام ارسال تگ جدید که با v شروع شود (مانند v0.1.1)
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Create Release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          # تولید خودکار لیست تغییرات (Changelog) بر اساس عنوان کامیت‌ها
+          generate_release_notes: true
+          # تشخیص خودکار نسخه‌های آزمایشی (اگر تگ شامل خط تیره باشد، مثل v0.1.1-beta، آن را به عنوان Pre-release علامت می‌زند)
+          prerelease: ${{ contains(github.ref, '-') }}
