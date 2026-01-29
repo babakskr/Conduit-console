@@ -7,7 +7,7 @@
 # Copyright (C) 2026 Babak Sorkhpour
 # Written by Dr. Babak Sorkhpour with help of ChatGPT
 #
-# Version: 0.2.4
+# Version: 0.2.5
 #
 # Key rules:
 # - Interactive TUI: DO NOT use `set -e`
@@ -451,6 +451,10 @@ docker_available() { has docker && docker info >/dev/null 2>&1; }
 
 list_docker_conduits() {
   docker ps -a --format '{{.Names}}' 2>/dev/null | grep -i '^conduit' || true
+}
+list_docker_conduits_running() {
+  # Source of truth: running containers (docker stats uses running set)
+  docker stats --no-stream --format '{{.Name}}' 2>/dev/null | grep -E '^(conduit|Conduit)' || true
 }
 
 docker_state() {
@@ -1048,112 +1052,79 @@ dashboard() {
 
     print_dash_row "native" "$u" "$dot" "$connecting" "$connected" "$up" "$down" "$uptime" "$m" "$b"
   done
+  # Docker rows (running containers only; source of truth = Docker runtime)
+  # Rule: list from docker stats, then read last [STATS] from docker logs.
+  local -a dcs=()
+  mapfile -t dcs < <(list_docker_conduits_running)
 
-  # Docker rows (managed instances if any; otherwise raw containers)
-  local managed_any=0
-  local d
-  if [[ -d "${DOCKER_INSTANCES_DIR}" ]]; then
-    for d in "${DOCKER_INSTANCES_DIR}"/conduit*; do
-      [[ -d "$d" && -f "$d/instance.conf" ]] || continue
-      managed_any=1
-      local inst
-      inst="$(basename "$d")"
-      total_services=$((total_services+1))
+  local c
+  for c in "${dcs[@]}"; do
+    [[ -z "${c}" ]] && continue
+    total_services=$((total_services+1))
 
-      local st stats parsed connecting connected up down uptime m b
-      st="$(docker_state "$inst")"
+    local st stats parsed connecting connected up down uptime m b
+    st="$(docker_state "$c")"
 
-      stats="$(last_stats_docker "$inst")"
-      if [[ -n "$stats" ]]; then
-        parsed="$(parse_stats_line "$stats")"
-        connecting="${parsed%%|*}"; parsed="${parsed#*|}"
-        connected="${parsed%%|*}"; parsed="${parsed#*|}"
-        up="${parsed%%|*}"; parsed="${parsed#*|}"
-        down="${parsed%%|*}"; uptime="${parsed##*|}"
-      else
-        connecting="-"; connected="-"; up="0B"; down="0B"; uptime="-"
-      fi
+    # Best-effort: read -m/-b from container command args
+    m="$(docker_get_flag_value "$c" "--max-clients" "-m")"
+    b="$(docker_get_flag_value "$c" "--bandwidth" "-b")"
+    [[ -z "${m}" ]] && m="-"
+    if [[ -z "${b}" ]]; then
+      b="∞"
+    else
+      b="$(bw_pretty "${b}")"
+    fi
 
-      read -r m b < <(docker_get_m_b_from_conf "$inst")
-      b="$(bw_pretty "$b")"
+    stats="$(last_stats_docker "$c")"
+    if [[ -n "$stats" ]]; then
+      parsed="$(parse_stats_line "$stats")"
+      connecting="${parsed%%|*}"; parsed="${parsed#*|}"
+      connected="${parsed%%|*}"; parsed="${parsed#*|}"
+      up="${parsed%%|*}"; parsed="${parsed#*|}"
+      down="${parsed%%|*}"; uptime="${parsed##*|}"
+    else
+      connecting="-"; connected="-"; up="0B"; down="0B"; uptime="-"
+    fi
 
-      local upb downb dot
-      upb="$(human_to_bytes "$up" 2>/dev/null || echo 0)"
-      downb="$(human_to_bytes "$down" 2>/dev/null || echo 0)"
-      dot="$(status_dot "$st" "$upb" "$downb")"
+    local upb downb dot
+    upb="$(human_to_bytes "$up" 2>/dev/null || echo 0)"
+    downb="$(human_to_bytes "$down" 2>/dev/null || echo 0)"
+    dot="$(status_dot "$st" "$upb" "$downb")"
 
-      if [[ "$st" != "running" ]]; then
-        errc=$((errc+1))
-      else
-        if (( upb > 0 || downb > 0 )); then okc=$((okc+1)); else waitc=$((waitc+1)); fi
-      fi
+    if [[ "$st" != "running" ]]; then
+      errc=$((errc+1))
+    else
+      if (( upb > 0 || downb > 0 )); then okc=$((okc+1)); else waitc=$((waitc+1)); fi
+    fi
 
-      [[ "$connecting" =~ ^[0-9]+$ ]] && tconn=$((tconn+connecting))
-      [[ "$connected" =~ ^[0-9]+$ ]] && tconnected=$((tconnected+connected))
-      tupb=$((tupb+upb))
-      tdownb=$((tdownb+downb))
+    [[ "$connecting" =~ ^[0-9]+$ ]] && tconn=$((tconn+connecting))
+    [[ "$connected" =~ ^[0-9]+$ ]] && tconnected=$((tconnected+connected))
+    tupb=$((tupb+upb))
+    tdownb=$((tdownb+downb))
 
-      print_dash_row "docker" "${inst}" "$dot" "$connecting" "$connected" "$up" "$down" "$uptime" "$m" "$b"
-    done
-  fi
-
-  if (( managed_any == 0 )); then
-    # raw containers
-    local -a cs
-    mapfile -t cs < <(list_docker_conduits)
-    local c
-    for c in "${cs[@]}"; do
-      [[ -z "$c" ]] && continue
-      total_services=$((total_services+1))
-      local st stats parsed connecting connected up down uptime
-      st="$(docker_state "$c")"
-      stats="$(last_stats_docker "$c")"
-      if [[ -n "$stats" ]]; then
-        parsed="$(parse_stats_line "$stats")"
-        connecting="${parsed%%|*}"; parsed="${parsed#*|}"
-        connected="${parsed%%|*}"; parsed="${parsed#*|}"
-        up="${parsed%%|*}"; parsed="${parsed#*|}"
-        down="${parsed%%|*}"; uptime="${parsed##*|}"
-      else
-        connecting="-"; connected="-"; up="0B"; down="0B"; uptime="-"
-      fi
-
-      local upb downb dot
-      upb="$(human_to_bytes "$up" 2>/dev/null || echo 0)"
-      downb="$(human_to_bytes "$down" 2>/dev/null || echo 0)"
-      dot="$(status_dot "$st" "$upb" "$downb")"
-
-      if [[ "$st" != "running" ]]; then
-        errc=$((errc+1))
-      else
-        if (( upb > 0 || downb > 0 )); then okc=$((okc+1)); else waitc=$((waitc+1)); fi
-      fi
-
-      [[ "$connecting" =~ ^[0-9]+$ ]] && tconn=$((tconn+connecting))
-      [[ "$connected" =~ ^[0-9]+$ ]] && tconnected=$((tconnected+connected))
-      tupb=$((tupb+upb))
-      tdownb=$((tdownb+downb))
-
-      print_dash_row "docker" "$c" "$dot" "$connecting" "$connected" "$up" "$down" "$uptime" "-" "-"
-    done
-  fi
+    print_dash_row "docker" "$c" "$dot" "$connecting" "$connected" "$up" "$down" "$uptime" "$m" "$b"
+  done
 
   local tup tdown
-  tup="$(bytes_to_human_nospace "$tupb")"
-  tdown="$(bytes_to_human_nospace "$tdownb")"
-
-  print_totals_box "$total_services" "$okc" "$waitc" "$errc" "$tconn" "$tconnected" "$tup" "$tdown"
+  tup="$(bytes_to_human_nospace "${tupb:-0}")"
+  tdown="$(bytes_to_human_nospace "${tdownb:-0}")"
+  print_totals_box "${total_services}" "${okc}" "${waitc}" "${errc}" "${tconn}" "${tconnected}" "${tup}" "${tdown}"
   print_legend_end
 
-  printf "\nPress ENTER or 0 to return. Auto-refresh continues...\n"
-  local input=""
-  local end_time=$((SECONDS + CFG_REFRESH_SECS))
-  while (( SECONDS < end_time )); do
-    read -r -t 0.2 input </dev/tty || true
-    [[ "${input}" == "0" ]] && return 0
-    [[ -n "${input}" ]] && return 0
-  done
+  printf "\nKeys: (0) Back   (q) Quit   (r) Refresh-now   (s) Settings\n"
+  local k=""
+  if read -rsn1 -t "${CFG_REFRESH_SECS}" k </dev/tty; then
+    case "${k}" in
+      0) return 0 ;;
+      q|Q) return 2 ;;
+      r|R) return 1 ;;
+      s|S) menu_settings; return 1 ;;
+      *) return 1 ;;
+    esac
+  fi
+  return 1
 }
+
 
 dashboard_loop() {
   while true; do

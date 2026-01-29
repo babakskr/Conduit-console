@@ -1,17 +1,21 @@
 # AI Development Guidelines & System Prompts
 # راهنمای توسعه هوشمند و پرامپت‌های سیستم
 
-> **Version:** 1.1.0
+> **Version:** 1.2.0
 > **Last Updated:** 2026-01-29
 > **Maintainer:** Conduit-console Community
 
-This document serves as the **Single Source of Truth** for AI assistants (ChatGPT, Claude, Copilot) contributing to the `Conduit-console` repository. It ensures code consistency, security, and strict adherence to release standards.> **Maintainer:** Conduit-console Community
+This document serves as the **Single Source of Truth** for AI assistants contributing to `Conduit-console`.
 
-This document serves as the **Single Source of Truth** for AI assistants (ChatGPT, Claude, Copilot) contributing to the `Conduit-console` repository. It ensures code consistency, security, and strict adherence to release standards.
+## 🆕 New Standard: Documentation & Help
+**Rule:** Every Bash script MUST include a detailed `-h` (Help) function.
+**Requirements:**
+1.  **Description:** Briefly explain what the script does.
+2.  **Usage:** Show the command syntax.
+3.  **Options:** List every flag with explanation.
+4.  **Examples:** Provide at least 2 concrete examples of how to run the script.
 
-این مستند به عنوان **منبع حقیقت واحد** برای دستیارهای هوش مصنوعی (مانند ChatGPT و...) جهت مشارکت در پروژه `Conduit-console` تنظیم شده است تا یکپارچگی کد، امنیت و استانداردهای انتشار تضمین شود.
 
----
 
 ## 🇬🇧 Part 1: English System Prompt (Primary)
 **Usage:** Paste this into the "Custom Instructions" or the beginning of a chat session.
