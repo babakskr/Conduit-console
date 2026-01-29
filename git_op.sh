@@ -3,18 +3,19 @@
 # Script: Git Operations Manager (Core Release Tool)
 # Repository: https://github.com/babakskr/Conduit-console.git
 # Author: Babak Sorkhpour
-# Version: 1.7.0
+# Version: 1.7.1
 #
 # Compliance:
-# - Feature: Auto-generates README.md with a dynamic table of tools, versions, and usage.
-# - Fixes: Supports multiple arguments for -no/-yes flags.
-# - Implements KR-008 (Strict Help Standard) parsing for docs.
+# - Feature: Auto-generates README.md by scanning ALL .sh/.md files in the repo.
+# - Fixes: Ensures README updates even for unmanaged files.
+# - Implements KR-008 (Strict Help Standard).
 # ==============================================================================
 
 set -u -o pipefail
 IFS=$'\n\t'
 
-# Core files to show in status report and README
+# Core files to show in status report (-l)
+# (README generation now scans ALL files dynamically)
 MANAGED_FILES=("conduit-console.sh" "conduit-optimizer.sh" "AI_DEV_GUIDELINES.md" "git_op.sh" "docs")
 MAIN_PRODUCT="conduit-console.sh"
 
@@ -34,7 +35,6 @@ show_version() {
     echo "Git Operations Manager - v${ver:-Unknown}"
 }
 
-# KR-008: Strict Help Standard
 show_help() {
     echo -e "${CYAN}Git Operations Manager (git_op)${NC}"
     echo "Description: Automates version control, README generation, and GitHub releases."
@@ -50,7 +50,7 @@ show_help() {
     echo "  -h              Show this help message."
     echo ""
     echo -e "${YELLOW}Examples:${NC}"
-    echo "  1. Release a new version (updates README.md automatically):"
+    echo "  1. Release a new version (updates README.md from all files):"
     echo "     ./git_op.sh"
     echo ""
 }
@@ -93,7 +93,7 @@ update_file_version() {
     fi
 }
 
-# --- README GENERATOR (New Feature) ---
+# --- README GENERATOR (Dynamic Scan) ---
 
 extract_metadata() {
     local file=$1
@@ -101,29 +101,34 @@ extract_metadata() {
     
     if [[ ! -f "$file" ]]; then echo "-"; return; fi
     
-    # Try to extract from # Description: header or echo "Description:" in help
     if [[ "$type" == "desc" ]]; then
         local desc
-        # Look for "# Description: ..." in header
         desc=$(grep -i "^# Description:" "$file" | head -n1 | cut -d: -f2- | sed 's/^[ \t]*//')
         if [[ -z "$desc" ]]; then
-            # Look for echo "Description: ..." in code
             desc=$(grep -i "echo.*Description:" "$file" | head -n1 | cut -d: -f2- | sed 's/^[ \t]*//' | tr -d '"')
         fi
-        echo "${desc:-No description available.}"
+        # Fallback for known files if missing headers
+        if [[ -z "$desc" ]]; then
+             case "$file" in
+                 "KNOWN_RISKS.md") desc="List of known risks and guards." ;;
+                 "AI_HANDOFF.md")  desc="Coordination log for AI assistants." ;;
+                 "ci-bash.yml")    desc="GitHub Actions CI configuration." ;;
+                 *) desc="-" ;;
+             esac
+        fi
+        echo "${desc}"
     elif [[ "$type" == "usage" ]]; then
         local usage
         usage=$(grep -i "echo.*Usage:" "$file" | head -n1 | cut -d: -f2- | sed 's/^[ \t]*//' | tr -d '"')
         if [[ -z "$usage" ]]; then
-             # Default usage guess
-             if [[ "$file" == *.sh ]]; then usage="./$file [OPTIONS]"; else usage="-"; fi
+             if [[ "$file" == *.sh ]]; then usage="./$file [OPTIONS]"; else usage="Reference"; fi
         fi
         echo "${usage}"
     fi
 }
 
 generate_dynamic_readme() {
-    echo ">> Generating README.md..."
+    echo -e ">> Generating ${CYAN}README.md${NC} from ALL project files..."
     local readme="README.md"
     
     # Header
@@ -132,27 +137,24 @@ generate_dynamic_readme() {
 
 > **Auto-Generated Documentation** > This project provides a set of tools for managing Conduit instances (Native & Docker) and optimizing system performance.
 
-## 🛠 Project Tools & Utility Overview
+## 🛠 Project Tools & Documentation
 
-The following table serves as the **Single Source of Truth** for the tools included in this repository.
-It is automatically updated during every release.
+The following table lists **all scripts and documents** in this repository.  
+It is automatically updated by \`git_op.sh\` during every release.
 
 | File | Version | Description | Usage |
 | :--- | :--- | :--- | :--- |
 EOF
 
-    # Dynamic Table Rows
-    for item in "${MANAGED_FILES[@]}"; do
+    # Dynamic Scan: Find all .sh and .md files (excluding README itself)
+    # git ls-files ensures we only list tracked files
+    local -a all_files
+    mapfile -t all_files < <(git ls-files | grep -E '\.(sh|md|yml)$' | grep -v "^README.md$" | sort)
+
+    for item in "${all_files[@]}"; do
         local ver
         ver=$(get_file_version "$item")
         
-        # Skip logic for git_op itself to avoid recursion confusion, or keep it? Let's keep it.
-        # Handle Directory
-        if [[ -d "$item" ]]; then
-             echo "| \`$item/\` | $ver | Documentation and supplemental files. | Reference |" >> "$readme"
-             continue
-        fi
-
         # Extract Metadata
         local desc
         desc=$(extract_metadata "$item" "desc")
@@ -160,18 +162,18 @@ EOF
         usage=$(extract_metadata "$item" "usage")
         
         # Format markdown row
-        echo "| \`$item\` | v$ver | $desc | \`$usage\` |" >> "$readme"
+        echo "| \`$item\` | ${ver:- -} | $desc | \`$usage\` |" >> "$readme"
     done
 
-    # Footer / Installation
+    # Footer
     cat >> "$readme" <<EOF
 
 ## 🚀 Installation & Setup
 
 ### Prerequisites
 * **Linux OS** (Ubuntu/Debian recommended)
-* **Root Privileges** (Required for service management and optimization)
-* **Git** & **Docker** (Optional, for Docker mode)
+* **Root Privileges** (Required for service management)
+* **Git** & **Docker** (Optional)
 
 ### Quick Start
 \`\`\`bash
@@ -186,15 +188,15 @@ chmod +x *.sh
 sudo ./conduit-console.sh
 \`\`\`
 
-## 🔄 Update & Release Management
-This repository uses \`git_op.sh\` for automated releases.
-* To check status: \`./git_op.sh -l\`
-* To update/release: \`./git_op.sh\`
+## 🔄 Release Management
+This repository uses \`git_op.sh\` for automated releases and documentation updates.
+* **Check Status:** \`./git_op.sh -l\`
+* **Publish Release:** \`./git_op.sh\` (Auto-updates README, Tags, and Pushes)
 
 ---
-*Last Updated: $(date)*
+*Generated by Git Operations Manager v$(grep "^# Version:" "$0" | awk '{print $3}') on $(date)*
 EOF
-    echo -e "${GREEN}README.md updated successfully.${NC}"
+    echo -e "   ${GREEN}README.md updated with ${#all_files[@]} files.${NC}"
 }
 
 # --- COMMANDS ---
@@ -274,7 +276,7 @@ command_release() {
         git add "$MAIN_PRODUCT"
     fi
     
-    # 4. Generate README (Before Release)
+    # 4. Generate README (Dynamically scans ALL files)
     generate_dynamic_readme
     git add README.md
     
