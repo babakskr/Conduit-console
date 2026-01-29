@@ -8,3 +8,4 @@ docker-instances/
 conduit-git-info.sh
 conduit-github-release.sh
 AI_DEV.sh
+conduit-reset-repo.sh
