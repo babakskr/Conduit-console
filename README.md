@@ -1,6 +1,6 @@
 # Conduit Console
 
-![Version](https://img.shields.io/badge/version-v0.2.17-blue?style=flat-square)
+![Version](https://img.shields.io/badge/version-v0.2.18-blue?style=flat-square)
 ![Branch](https://img.shields.io/badge/branch-main-purple?style=flat-square)
 ![License](https://img.shields.io/badge/license-MIT-orange?style=flat-square)
 ![Author](https://img.shields.io/badge/author-Babak%20Sorkhpour-blueviolet?style=flat-square)
@@ -96,4 +96,4 @@ Please refer to the following documents before contributing:
 * **[AI_HANDOFF.md](AI_HANDOFF.md):** Operational log for development continuity.
 
 ---
-*Last Updated: Thu Jan 29 09:04:25 PM UTC 2026* *© 2026 Babak Sorkhpour. All Rights Reserved.*
+*Last Updated: Thu Jan 29 09:44:30 PM UTC 2026* *© 2026 Babak Sorkhpour. All Rights Reserved.*
