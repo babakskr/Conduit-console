@@ -1,0 +1,7 @@
+
+# Local/generated artifacts
+*.bak
+conduit-console.bak
+conduit-console.config.json
+docker-instances/
+.DS_Store
