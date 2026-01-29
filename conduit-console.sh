@@ -7,7 +7,7 @@
 # Copyright (C) 2026 Babak Sorkhpour
 # Written by Dr. Babak Sorkhpour with help of ChatGPT
 #
-# Version: 0.2.2
+# Version: 0.2.1
 #
 # Key rules:
 # - Interactive TUI: DO NOT use `set -e`
@@ -23,7 +23,7 @@ set -u -o pipefail
 IFS=$'\n\t'
 
 APP_NAME="Conduit Console Manager"
-APP_VER="0.1.3"
+APP_VER="0.2.1"
 
 # ------------------------- Paths (console-local) -------------------------------
 SCRIPT_PATH="$(readlink -f "${BASH_SOURCE[0]}")"
@@ -81,37 +81,6 @@ init_colors() {
     C_RED=""; C_GREEN=""; C_YELLOW=""; C_BLUE=""; C_CYAN=""; C_WHITE=""
   fi
 }
-
-# ------------------------- Terminal helpers -----------------------------------
-term_cols() {
-  local c
-  c="$(tput cols 2>/dev/null || echo 120)"
-  [[ "${c}" =~ ^[0-9]+$ ]] || c=120
-  (( c < 60 )) && c=60
-  echo "${c}"
-}
-
-repeat_char() {
-  local ch="$1" n="$2"
-  (( n <= 0 )) && { echo -n ""; return 0; }
-  printf '%*s' "${n}" '' | tr ' ' "${ch}"
-}
-
-print_box_line() {
-  local l="$1" r="$2" ch="$3" n="$4" col="$5" reset="$6"
-  printf "%s%s%s%s%s\n" "${col}" "${l}" "$(repeat_char "${ch}" "${n}")" "${r}" "${reset}"
-}
-
-print_box_text() {
-  local txt="$1" inner="$2" col="$3" reset="$4"
-  local t="${txt}"
-  if (( ${#t} > inner )); then
-    t="${t:0:inner}"
-  fi
-  printf "%s│%s%-*s%s│%s\n" "${col}" "${reset}" "${inner}" "${t}" "${col}" "${reset}"
-}
-
-
 
 hr() { printf "%s\n" "${C_BLUE}──────────────────────────────────────────────────────────────────────────────${C_RESET}"; }
 
@@ -481,43 +450,8 @@ native_view_logs_last10() {
 docker_available() { has docker && docker info >/dev/null 2>&1; }
 
 list_docker_conduits() {
-  # All containers matching conduit (existing)
-  docker ps -a --format '{{.Names}}' 2>/dev/null | grep -i 'conduit' | sort -u || true
+  docker ps -a --format '{{.Names}}' 2>/dev/null | grep -i '^conduit' || true
 }
-
-list_docker_conduits_running() {
-  # Running containers only (source of truth for dashboard). Uses docker stats first.
-  docker stats --no-stream --format '{{.Name}}' 2>/dev/null | grep -i 'conduit' | sort -u || true
-}
-
-docker_get_label() {
-  local cname="$1" key="$2"
-  docker inspect -f "{{ index .Config.Labels \"${key}\" }}" "${cname}" 2>/dev/null || true
-}
-
-docker_get_m_b() {
-  # Prefer Docker labels (docker config), then runtime args.
-  local cname="$1"
-  local m b
-  m="$(docker_get_label "${cname}" "conduit.m")"
-  b="$(docker_get_label "${cname}" "conduit.b")"
-  if [[ -n "${m}" || -n "${b}" ]]; then
-    echo "${m:- -} ${b:- -}"
-    return 0
-  fi
-
-  # Runtime args (best effort)
-  local args
-  args="$(docker exec "${cname}" sh -lc 'ps -eo args | grep -E "[c]onduit" | head -n1' 2>/dev/null || true)"
-  if [[ -n "${args}" ]]; then
-    m="$(sed -nE 's/.*(^|[[:space:]])-m[[:space:]]+([0-9]+).*/\\2/p' <<<"${args}")"
-    b="$(sed -nE 's/.*(^|[[:space:]])-b[[:space:]]+([-0-9.]+).*/\\2/p' <<<"${args}")"
-    [[ -n "${m}" || -n "${b}" ]] && { echo "${m:- -} ${b:- -}"; return 0; }
-  fi
-
-  echo "- -"
-}
-
 
 docker_state() {
   docker inspect -f '{{.State.Status}}' "$1" 2>/dev/null || echo "unknown"
@@ -529,9 +463,10 @@ last_stats_docker() {
 
 
 docker_list_conduit_containers() {
-  docker ps -a --format '{{.Names}}' 2>/dev/null | grep -i 'conduit' | sort -u || true
+  # List containers from Docker (source of truth). Show both new naming and legacy ones.
+  docker ps -a --format '{{.Names}}' 2>/dev/null \
+    | grep -E '^(Conduit[0-9]+\.docker|conduit[0-9]+|conduit)$' || true
 }
-
 
 
 docker_instance_conf_path() {
@@ -670,7 +605,9 @@ docker_create_instance() {
   docker_available || { err "Docker not available."; pause_enter; return 0; }
 
   header
-  printf "%sCreate New Docker Instance%s\n\n" "${C_BOLD}" "${C_RESET}"
+  printf "%sCreate New Docker Instance%s
+
+" "${C_BOLD}" "${C_RESET}"
   echo "Naming convention: ConduitXXX.docker"
   echo "A new dedicated Docker volume + a new local folder will be created for every instance."
   echo
@@ -690,6 +627,10 @@ docker_create_instance() {
     return 0
   fi
 
+  if [[ -d "${inst_dir}" ]]; then
+    warn "Instance folder already exists: ${inst_dir}"
+  fi
+
   read -r -p "Max clients (-m) [default=${num}]: " m </dev/tty || true
   [[ -z "${m}" ]] && m="${num}"
   [[ "${m}" =~ ^[0-9]+$ ]] || { warn "Invalid -m"; pause_enter; return 0; }
@@ -705,25 +646,29 @@ docker_create_instance() {
 
   local volume="conduit${num}-data"
   local data_mount="/home/conduit/data"
+  local run_cmd="conduit start -m ${m} -b ${bw} -d ${data_mount} --stats-file ${data_mount}/stats.json"
 
-  # Persist manager-side config (secondary, for housekeeping only).
+  # Persist our manager-side config (secondary source of truth).
   CONTAINER_NAME="${cname}"
   VOLUME_NAME="${volume}"
+  NETWORK_MODE="host"
+  PORT_ARGS=""
   DATA_MOUNT="${data_mount}"
-  M="${m}"
-  B="${bw}"
+  RUN_CMD="${run_cmd}"
   docker_write_instance_conf "${conf}"
 
   info "Creating Docker volume: ${volume}"
-  docker volume create "${volume}" >/dev/null
+  docker volume create "${volume}"
 
   info "Pulling image: ${DOCKER_IMAGE}"
   docker pull "${DOCKER_IMAGE}"
 
   info "Starting container: ${cname}"
-  # IMPORTANT: Upstream-standard run command (no extra conduit CLI args injected).
-  # Store -m/-b as Docker labels so dashboard can read them from Docker config.
-  docker run -d --name "${cname}"     -v "${volume}:${data_mount}"     --restart unless-stopped     --label "conduit.m=${m}"     --label "conduit.b=${bw}"     "${DOCKER_IMAGE}"
+  docker run -d --name "${cname}" \
+    -v "${volume}:${data_mount}" \
+    --restart unless-stopped \
+    "${DOCKER_IMAGE}" \
+    ${run_cmd}
 
   ok "Created Docker instance: ${cname}"
   pause_enter
@@ -810,7 +755,7 @@ docker_delete_instance() {
   docker stop "${cname}" 2>&1 || true
 
   info "Removing container..."
-  docker rm -f "${cname}" 2>&1 || true
+  docker rm "${cname}" 2>&1 || true
 
   if [[ -n "${volume}" ]]; then
     info "Removing volume: ${volume}"
@@ -984,13 +929,12 @@ parse_stats_line() {
 # ------------------------- Dashboard rendering (aligned) ------------------------
 print_nic_box() {
   local iface="$1" rx="$2" tx="$3"
-  local cols inner
-  cols="$(term_cols)"
-  inner=$((cols-2))
-
-  print_box_line "┌" "┐" "─" "${inner}" "${C_CYAN}" "${C_RESET}"
-  print_box_text "📡 NIC: ${iface}    RX: ${rx} Mbps    TX: ${tx} Mbps" "${inner}" "${C_CYAN}" "${C_RESET}"
-  print_box_line "└" "┘" "─" "${inner}" "${C_CYAN}" "${C_RESET}"
+  printf "%s┌──────────────────────────────────────────────┐%s\n" "${C_CYAN}" "${C_RESET}"
+  printf "%s│%s 📡 NIC: %-10s %sRX:%s %8s Mbps  %sTX:%s %8s Mbps %s│%s\n" \
+    "${C_CYAN}" "${C_RESET}" "$iface" \
+    "${C_DIM}" "${C_RESET}" "$rx" "${C_DIM}" "${C_RESET}" "$tx" \
+    "${C_CYAN}" "${C_RESET}"
+  printf "%s└──────────────────────────────────────────────┘%s\n\n" "${C_CYAN}" "${C_RESET}"
 }
 
 print_dash_header() {
@@ -1007,14 +951,12 @@ print_dash_row() {
 
 print_totals_box() {
   local services="$1" okc="$2" waitc="$3" errc="$4" tconn="$5" tconnected="$6" tup="$7" tdown="$8"
-  local cols inner
-  cols="$(term_cols)"
-  inner=$((cols-2))
-
-  print_box_line "┌" "┐" "─" "${inner}" "${C_CYAN}" "${C_RESET}"
-  print_box_text "📊 TOTAL: Services=${services} | ✅ OK=${okc} | ⏳ WAIT=${waitc} | 🔴 ERR/DOWN=${errc}" "${inner}" "${C_CYAN}" "${C_RESET}"
-  print_box_text "🔌 Connecting=${tconn} | 🟢 Connected=${tconnected} | ⬆️ Up=${tup} | ⬇️ Down=${tdown}" "${inner}" "${C_CYAN}" "${C_RESET}"
-  print_box_line "└" "┘" "─" "${inner}" "${C_CYAN}" "${C_RESET}"
+  printf "\n%s┌────────────────────────────────────────────────────────────────────────────┐%s\n" "${C_CYAN}" "${C_RESET}"
+  printf "%s│%s 📊 TOTAL: Services=%s | ✅ OK=%s | ⏳ WAIT=%s | 🔴 ERR/DOWN=%s%*s%s│%s\n" \
+    "${C_CYAN}" "${C_RESET}" "$services" "$okc" "$waitc" "$errc" 1 "" "${C_CYAN}" "${C_RESET}"
+  printf "%s│%s 🔌 Connecting=%s | 🟢 Connected=%s | ⬆️ Up=%s | ⬇️ Down=%s%*s%s│%s\n" \
+    "${C_CYAN}" "${C_RESET}" "$tconn" "$tconnected" "$tup" "$tdown" 1 "" "${C_CYAN}" "${C_RESET}"
+  printf "%s└────────────────────────────────────────────────────────────────────────────┘%s\n" "${C_CYAN}" "${C_RESET}"
 }
 
 print_legend_end() {
@@ -1107,51 +1049,94 @@ dashboard() {
     print_dash_row "native" "$u" "$dot" "$connecting" "$connected" "$up" "$down" "$uptime" "$m" "$b"
   done
 
-    # Docker rows (source of truth: Docker running containers via docker stats)
-  local -a cs
-  mapfile -t cs < <(list_docker_conduits_running)
-  local c
-  for c in "${cs[@]}"; do
-    [[ -z "$c" ]] && continue
-    total_services=$((total_services+1))
+  # Docker rows (managed instances if any; otherwise raw containers)
+  local managed_any=0
+  local d
+  if [[ -d "${DOCKER_INSTANCES_DIR}" ]]; then
+    for d in "${DOCKER_INSTANCES_DIR}"/conduit*; do
+      [[ -d "$d" && -f "$d/instance.conf" ]] || continue
+      managed_any=1
+      local inst
+      inst="$(basename "$d")"
+      total_services=$((total_services+1))
 
-    local st stats parsed connecting connected up down uptime
-    st="$(docker_state "$c")"
+      local st stats parsed connecting connected up down uptime m b
+      st="$(docker_state "$inst")"
 
-    # Always: list from docker stats first, then extract the latest [STATS] from docker logs.
-    stats="$(last_stats_docker "$c")"
-    if [[ -n "$stats" ]]; then
-      parsed="$(parse_stats_line "$stats")"
-      connecting="${parsed%%|*}"; parsed="${parsed#*|}"
-      connected="${parsed%%|*}"; parsed="${parsed#*|}"
-      up="${parsed%%|*}"; parsed="${parsed#*|}"
-      down="${parsed%%|*}"; uptime="${parsed##*|}"
-    else
-      connecting="-"; connected="-"; up="0B"; down="0B"; uptime="-"
-    fi
+      stats="$(last_stats_docker "$inst")"
+      if [[ -n "$stats" ]]; then
+        parsed="$(parse_stats_line "$stats")"
+        connecting="${parsed%%|*}"; parsed="${parsed#*|}"
+        connected="${parsed%%|*}"; parsed="${parsed#*|}"
+        up="${parsed%%|*}"; parsed="${parsed#*|}"
+        down="${parsed%%|*}"; uptime="${parsed##*|}"
+      else
+        connecting="-"; connected="-"; up="0B"; down="0B"; uptime="-"
+      fi
 
-    local m b
-    read -r m b < <(docker_get_m_b "$c" || echo "- -")
-    b="$(bw_pretty "$b")"
+      read -r m b < <(docker_get_m_b_from_conf "$inst")
+      b="$(bw_pretty "$b")"
 
-    local upb downb dot
-    upb="$(human_to_bytes "$up" 2>/dev/null || echo 0)"
-    downb="$(human_to_bytes "$down" 2>/dev/null || echo 0)"
-    dot="$(status_dot "$st" "$upb" "$downb")"
+      local upb downb dot
+      upb="$(human_to_bytes "$up" 2>/dev/null || echo 0)"
+      downb="$(human_to_bytes "$down" 2>/dev/null || echo 0)"
+      dot="$(status_dot "$st" "$upb" "$downb")"
 
-    if [[ "$st" != "running" ]]; then
-      errc=$((errc+1))
-    else
-      if (( upb > 0 || downb > 0 )); then okc=$((okc+1)); else waitc=$((waitc+1)); fi
-    fi
+      if [[ "$st" != "running" ]]; then
+        errc=$((errc+1))
+      else
+        if (( upb > 0 || downb > 0 )); then okc=$((okc+1)); else waitc=$((waitc+1)); fi
+      fi
 
-    [[ "$connecting" =~ ^[0-9]+$ ]] && tconn=$((tconn+connecting))
-    [[ "$connected" =~ ^[0-9]+$ ]] && tconnected=$((tconnected+connected))
-    tupb=$((tupb+upb))
-    tdownb=$((tdownb+downb))
+      [[ "$connecting" =~ ^[0-9]+$ ]] && tconn=$((tconn+connecting))
+      [[ "$connected" =~ ^[0-9]+$ ]] && tconnected=$((tconnected+connected))
+      tupb=$((tupb+upb))
+      tdownb=$((tdownb+downb))
 
-    print_dash_row "docker" "$c" "$dot" "$connecting" "$connected" "$up" "$down" "$uptime" "$m" "$b"
-  done
+      print_dash_row "docker" "${inst}" "$dot" "$connecting" "$connected" "$up" "$down" "$uptime" "$m" "$b"
+    done
+  fi
+
+  if (( managed_any == 0 )); then
+    # raw containers
+    local -a cs
+    mapfile -t cs < <(list_docker_conduits)
+    local c
+    for c in "${cs[@]}"; do
+      [[ -z "$c" ]] && continue
+      total_services=$((total_services+1))
+      local st stats parsed connecting connected up down uptime
+      st="$(docker_state "$c")"
+      stats="$(last_stats_docker "$c")"
+      if [[ -n "$stats" ]]; then
+        parsed="$(parse_stats_line "$stats")"
+        connecting="${parsed%%|*}"; parsed="${parsed#*|}"
+        connected="${parsed%%|*}"; parsed="${parsed#*|}"
+        up="${parsed%%|*}"; parsed="${parsed#*|}"
+        down="${parsed%%|*}"; uptime="${parsed##*|}"
+      else
+        connecting="-"; connected="-"; up="0B"; down="0B"; uptime="-"
+      fi
+
+      local upb downb dot
+      upb="$(human_to_bytes "$up" 2>/dev/null || echo 0)"
+      downb="$(human_to_bytes "$down" 2>/dev/null || echo 0)"
+      dot="$(status_dot "$st" "$upb" "$downb")"
+
+      if [[ "$st" != "running" ]]; then
+        errc=$((errc+1))
+      else
+        if (( upb > 0 || downb > 0 )); then okc=$((okc+1)); else waitc=$((waitc+1)); fi
+      fi
+
+      [[ "$connecting" =~ ^[0-9]+$ ]] && tconn=$((tconn+connecting))
+      [[ "$connected" =~ ^[0-9]+$ ]] && tconnected=$((tconnected+connected))
+      tupb=$((tupb+upb))
+      tdownb=$((tdownb+downb))
+
+      print_dash_row "docker" "$c" "$dot" "$connecting" "$connected" "$up" "$down" "$uptime" "-" "-"
+    done
+  fi
 
   local tup tdown
   tup="$(bytes_to_human_nospace "$tupb")"
@@ -1164,20 +1149,17 @@ dashboard() {
   local input=""
   local end_time=$((SECONDS + CFG_REFRESH_SECS))
   while (( SECONDS < end_time )); do
-    input=""; read -r -t 0.2 input </dev/tty || true
-    [[ "${input}" == "0" ]] && return 1
-    [[ -n "${input}" ]] && return 1
+    read -r -t 0.2 input </dev/tty || true
+    [[ "${input}" == "0" ]] && return 0
+    [[ -n "${input}" ]] && return 0
   done
-  return 0
 }
 
-
 dashboard_loop() {
-  # dashboard returns 0 => continue auto-refresh, 1 => exit to menu
-  while dashboard; do
-    :
+  while true; do
+    dashboard
+    return 0
   done
-  return 0
 }
 
 # ------------------------- Settings Menu ---------------------------------------
