@@ -7,3 +7,4 @@ docker-instances/
 .DS_Store
 conduit-git-info.sh
 conduit-github-release.sh
+AI_DEV.sh
