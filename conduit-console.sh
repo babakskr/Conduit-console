@@ -23,7 +23,7 @@ set -u -o pipefail
 IFS=$'\n\t'
 
 APP_NAME="Conduit Console Manager"
-APP_VER="0.1.2"
+APP_VER="0.1.3"
 
 # ------------------------- Paths (console-local) -------------------------------
 SCRIPT_PATH="$(readlink -f "${BASH_SOURCE[0]}")"
