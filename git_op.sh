@@ -3,11 +3,11 @@
 # Script: Git Operations Manager (Core Release Tool)
 # Repository: https://github.com/babakskr/Conduit-console.git
 # Author: Babak Sorkhpour
-# Version: 1.8.0
+# Version: 1.8.1
 #
 # Compliance:
-# - Feature: Generates a PROFESSIONAL GitHub README.md (Badges, TOC, Categorized Files).
-# - Fixes: "Unbound variable" risks handled.
+# - Fixes: Ensures README.md is committed and pushed to 'main' branch properly.
+# - Feature: Forces checkout to main/master before release to ensure docs are visible.
 # - Implements KR-008 (Strict Help Standard).
 # ==============================================================================
 
@@ -16,6 +16,7 @@ IFS=$'\n\t'
 
 # Core tracking
 MAIN_PRODUCT="conduit-console.sh"
+PRIMARY_BRANCH="main"
 
 # Colors
 GREEN='\033[0;32m'
@@ -35,7 +36,7 @@ show_version() {
 
 show_help() {
     echo -e "${CYAN}Git Operations Manager (git_op)${NC}"
-    echo "Description: Automates version control, Professional README generation, and GitHub releases."
+    echo "Description: Automates version control, README generation, and GitHub releases."
     echo ""
     echo -e "${YELLOW}Usage:${NC} ./git_op.sh [OPTION] [FILE...]"
     echo ""
@@ -48,7 +49,7 @@ show_help() {
     echo "  -h              Show this help message."
     echo ""
     echo -e "${YELLOW}Examples:${NC}"
-    echo "  1. Release a new version (Re-generates README.md entirely):"
+    echo "  1. Release a new version (Force updates README on main):"
     echo "     ./git_op.sh"
     echo ""
 }
@@ -91,19 +92,16 @@ update_file_version() {
     fi
 }
 
-# --- README GENERATOR ENGINE (Professional) ---
+# --- README GENERATOR ENGINE ---
 
 extract_desc() {
     local file=$1
     local desc="-"
     if [[ -f "$file" ]]; then
-        # Try # Description: header
         desc=$(grep -i "^# Description:" "$file" | head -n1 | cut -d: -f2- | sed 's/^[ \t]*//')
-        # Try inside code (echo "Description: ...")
         if [[ -z "$desc" ]]; then
             desc=$(grep -i "echo.*Description:" "$file" | head -n1 | cut -d: -f2- | sed 's/^[ \t]*//' | tr -d '"')
         fi
-        # Fallbacks for specific docs
         if [[ -z "$desc" ]]; then
             case "$file" in
                 "KNOWN_RISKS.md") desc="Official registry of known bugs and required guards." ;;
@@ -119,11 +117,9 @@ generate_dynamic_readme() {
     echo -e ">> Generating professional ${CYAN}README.md${NC}..."
     local readme="README.md"
     
-    # Get Global Version from Main Product
     local project_ver
     project_ver=$(get_file_version "$MAIN_PRODUCT")
     
-    # --- 1. HEADER & BADGES ---
     cat > "$readme" <<EOF
 # Conduit Console Manager
 
@@ -132,7 +128,7 @@ generate_dynamic_readme() {
 ![License](https://img.shields.io/badge/license-GPLv3-orange?style=flat-square)
 ![Bash](https://img.shields.io/badge/language-Bash-4EAA25?style=flat-square&logo=gnu-bash&logoColor=white)
 
-> **Professional TUI for Conduit Management** > A unified console to manage Native (Systemd) and Docker instances of Conduit with real-time dashboards, performance optimization, and rigorous safety guards.
+> **Professional TUI for Conduit Management** > A unified console to manage Native (Systemd) and Docker instances.
 
 ---
 
@@ -147,27 +143,23 @@ generate_dynamic_readme() {
 ---
 
 ## ✨ Features
-* **Hybrid Management:** Control both Systemd services and Docker containers from one place.
-* **Real-time Dashboard:** \`htop\`-style interface monitoring Traffic (RX/TX), Connections, and Uptime.
-* **Performance Optimizer:** Dedicated tool to tune CPU/IO priority for high-load instances.
-* **Safety First:** Strict \`set -u\` guards, input validation, and loop protection (see [KNOWN_RISKS.md](KNOWN_RISKS.md)).
-* **Automated CI/CD:** Integrated release manager and Bash syntax validation.
+* **Hybrid Management:** Control both Systemd services and Docker containers.
+* **Real-time Dashboard:** \`htop\`-style interface.
+* **Performance Optimizer:** Dedicated tool to tune CPU/IO priority.
+* **Safety First:** Strict guards (see [KNOWN_RISKS.md](KNOWN_RISKS.md)).
 
 ---
 
 ## 📂 Project Structure
 
-Below is the dynamic list of components tracked in this repository.
+Current version manifest (Auto-generated):
 
 EOF
-
-    # --- 2. DYNAMIC FILE TABLE (Categorized) ---
     
     echo "### 🔹 Core Components" >> "$readme"
     echo "| File | Ver | Description |" >> "$readme"
     echo "| :--- | :--- | :--- |" >> "$readme"
     
-    # Scan for Shell Scripts (Core & Utils)
     local -a sh_files
     mapfile -t sh_files < <(git ls-files | grep "\.sh$" | grep -v "git_op.sh" | sort)
     for f in "${sh_files[@]}"; do
@@ -181,7 +173,7 @@ EOF
     echo "| \`git_op.sh\` | v$(get_file_version "git_op.sh") | $(extract_desc "git_op.sh") |" >> "$readme"
     
     echo "" >> "$readme"
-    echo "### 🔹 Documentation & Config" >> "$readme"
+    echo "### 🔹 Documentation" >> "$readme"
     echo "| File | Description |" >> "$readme"
     echo "| :--- | :--- |" >> "$readme"
     
@@ -191,7 +183,6 @@ EOF
         echo "| \`$f\` | $(extract_desc "$f") |" >> "$readme"
     done
     
-    # --- 3. INSTALLATION ---
     cat >> "$readme" <<EOF
 
 ---
@@ -199,20 +190,14 @@ EOF
 ## 🚀 Installation
 
 ### Prerequisites
-1. **Linux OS** (Ubuntu 20.04+, Debian 11+)
-2. **Root Privileges** (Required for systemd/docker control)
-3. **Dependencies:** \`curl\`, \`jq\`, \`docker\` (optional), \`iproute2\`
+* **Linux OS** (Ubuntu/Debian)
+* **Root Privileges**
 
 ### Quick Setup
 \`\`\`bash
-# 1. Clone Repository
 git clone https://github.com/babakskr/Conduit-console.git
 cd Conduit-console
-
-# 2. Make Executable
 chmod +x *.sh
-
-# 3. Run Main Console
 sudo ./conduit-console.sh
 \`\`\`
 
@@ -220,48 +205,23 @@ sudo ./conduit-console.sh
 
 ## 🎮 Usage
 
-### Main Console
-The central hub for all operations.
-\`\`\`bash
-sudo ./conduit-console.sh
-\`\`\`
-*Navigate using numbers [1-4]. Press 'q' in Dashboard to return.*
-
-### Performance Optimizer
-Run this if you experience network lag or high load.
-\`\`\`bash
-# Auto-mode (Recommended)
-sudo ./conduit-optimizer.sh
-
-# Manual mode (e.g., Docker priority 5, Native priority 10)
-sudo ./conduit-optimizer.sh -dock 5 -srv 10
-\`\`\`
-
----
-
-## 📚 Documentation & Compliance
-
-This project adheres to strict development protocols.
-* **[KNOWN_RISKS.md](KNOWN_RISKS.md):** Registry of past bugs and implemented guards (The "Constitution").
-* **[AI_HANDOFF.md](AI_HANDOFF.md):** Coordination log for AI assistants.
-* **[AI_DEV_GUIDELINES.md](AI_DEV_GUIDELINES.md):** Coding standards and prompt protocols.
+* **Main Console:** \`sudo ./conduit-console.sh\`
+* **Optimizer:** \`sudo ./conduit-optimizer.sh\`
 
 ---
 
 ## 🔄 Release Management
 
-This repository creates releases automatically using \`git_op.sh\`.
-
 | Command | Action |
 | :--- | :--- |
-| \`./git_op.sh -l\` | Check file status and version alignment. |
-| \`./git_op.sh\` | **Full Release:** Update README, Tag Version, Push to GitHub. |
+| \`./git_op.sh -l\` | Check status. |
+| \`./git_op.sh\` | **Release:** Update README, Tag, Push. |
 
 ---
-*Auto-generated by Git Operations Manager v$(get_file_version "git_op.sh") on $(date)*
+*Generated by Git Operations Manager v$(get_file_version "git_op.sh") on $(date)*
 EOF
 
-    echo -e "   ${GREEN}Professional README.md generated.${NC}"
+    echo -e "   ${GREEN}README.md updated.${NC}"
 }
 
 # --- COMMANDS ---
@@ -269,27 +229,21 @@ EOF
 command_list_status() {
     echo -e "${CYAN}--- Project Core Status ---${NC}"
     echo ">> Fetching remote status..."
-    git fetch origin main >/dev/null 2>&1
+    git fetch origin "$PRIMARY_BRANCH" >/dev/null 2>&1
     
     printf "%-30s %-10s %-25s %-15s\n" "Filename" "Ver" "Local Git Status" "Remote"
     echo "-------------------------------------------------------------------------------------"
-    
-    # Dynamic list for status check
     local -a files
     mapfile -t files < <(git ls-files | sort)
-    
     for item in "${files[@]}"; do
         local ver
         ver=$(get_file_version "$item")
-        
         local l_stat=""
         local raw_stat
         raw_stat=$(git status --porcelain "$item" | awk '{print $1}' | head -n1)
         if [[ -z "$raw_stat" ]]; then l_stat="${GREEN}Clean${NC}"; else l_stat="${YELLOW}Modified${NC}"; fi
-        
         local r_stat="${RED}MISSING${NC}"
-        if git ls-tree -r origin/main --name-only 2>/dev/null | grep -q "^$item"; then r_stat="${GREEN}SYNCED${NC}"; fi
-        
+        if git ls-tree -r origin/"$PRIMARY_BRANCH" --name-only 2>/dev/null | grep -q "^$item"; then r_stat="${GREEN}SYNCED${NC}"; fi
         printf "%-30s %-10s %-35b %-20b\n" "$item" "${ver:-}" "$l_stat" "$r_stat"
     done
     echo "-------------------------------------------------------------------------------------"
@@ -312,6 +266,12 @@ command_allow_file() {
 }
 
 command_release() {
+    # 0. Sync Branch (Fix for detached/desync issues)
+    echo ">> Ensuring on $PRIMARY_BRANCH branch..."
+    git checkout "$PRIMARY_BRANCH" 2>/dev/null || git checkout -b "$PRIMARY_BRANCH"
+    git pull origin "$PRIMARY_BRANCH" 2>/dev/null || echo "   (Pull skipped/failed, continuing...)"
+
+    # 1. Versioning
     local raw_ver
     raw_ver=$(get_file_version "$MAIN_PRODUCT")
     if [[ "$raw_ver" == "-" || "$raw_ver" == "Missing" ]]; then raw_ver="0.0.1"; fi
@@ -330,19 +290,16 @@ command_release() {
         git add "$MAIN_PRODUCT"
     fi
     
-    # RE-GENERATE README BEFORE COMMIT
+    # 2. GENERATE README (CRITICAL: Must happen before commit)
     generate_dynamic_readme
     git add README.md
     
+    # 3. Commit Content
+    git add .
     local release_body="## 🚀 Release $target_tag"
     release_body="${release_body}"$'\n\nAutomated release via git_op.sh\n'
     
-    git add .
-    if git diff --cached --quiet; then
-        echo -e "${YELLOW}No changes detected to release.${NC}"
-        if [[ "$next_ver" == "${raw_ver#v}" ]]; then exit 0; fi
-    fi
-
+    # Extract notes
     echo ">> Scanning ALL files for release notes..."
     while IFS= read -r file; do
          local notes
@@ -352,11 +309,21 @@ command_release() {
          fi
     done < <(git grep -l "<component_release_notes>")
     
-    git commit -m "release: $target_tag"
-    git tag -a "$target_tag" -m "Release $target_tag"
+    # Check if anything to commit (including README)
+    if git diff --cached --quiet; then
+        echo -e "${YELLOW}No changes detected to release.${NC}"
+         # If version didn't change and no files changed, exit
+        if [[ "$next_ver" == "${raw_ver#v}" ]]; then exit 0; fi
+    fi
+
+    git commit -m "release: $target_tag (Docs Updated)"
     
-    echo ">> Pushing to GitHub..."
-    git push origin main
+    # 4. Push to Main FIRST (Ensures README is on front page)
+    echo ">> Pushing code & docs to $PRIMARY_BRANCH..."
+    git push origin "$PRIMARY_BRANCH"
+    
+    # 5. Tag & Release
+    git tag -a "$target_tag" -m "Release $target_tag"
     git push origin "$target_tag"
     
     if command -v gh &> /dev/null; then
