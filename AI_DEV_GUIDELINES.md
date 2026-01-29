@@ -1,9 +1,11 @@
 # AI Development Guidelines & System Prompts
 # راهنمای توسعه هوشمند و پرامپت‌های سیستم
 
-> **Version:** 1.0.0-docs
-> **Last Updated:** 2026-01-28
+> **Version:** 1.1.0
+> **Last Updated:** 2026-01-29
 > **Maintainer:** Conduit-console Community
+
+This document serves as the **Single Source of Truth** for AI assistants (ChatGPT, Claude, Copilot) contributing to the `Conduit-console` repository. It ensures code consistency, security, and strict adherence to release standards.> **Maintainer:** Conduit-console Community
 
 This document serves as the **Single Source of Truth** for AI assistants (ChatGPT, Claude, Copilot) contributing to the `Conduit-console` repository. It ensures code consistency, security, and strict adherence to release standards.
 
