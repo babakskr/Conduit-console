@@ -1,109 +1,184 @@
 #!/bin/bash
 # ==============================================================================
-# Script: Automated Git Release Manager
-# Purpose: Parses main script for version/changes, updates README, and pushes to GitHub.
+# CORE TOOL: Git Operations & Release Manager
+# Repository: https://github.com/babakskr/Conduit-console.git
+# Description: Central hub for versioning, file management (allow/deny), and releasing.
 # Author: Babak Sorkhpour
 # ==============================================================================
 
-MAIN_SCRIPT="conduit-optimizer.sh"
-README_FILE="README.md"
+# --- CONFIG ---
+# Define the files managed by this core tool
+MANAGED_FILES=("conduit-console.sh" "conduit-optimizer.sh" "AI_DEV_GUIDELINES.md" "git_op.sh")
 
-# 1. EXTRACT METADATA FROM MAIN SCRIPT
-echo ">> extracting metadata from $MAIN_SCRIPT..."
+# Main product file (Source of Truth for Repo Version)
+MAIN_PRODUCT="conduit-console.sh" 
 
-# Get Version (grep "Version: x.x.x")
-VERSION=$(grep "^# Version:" "$MAIN_SCRIPT" | awk '{print $3}')
+# Colors
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+RED='\033[0;31m'
+CYAN='\033[0;36m'
+NC='\033[0m'
 
-# Get Release Notes (Extract text between <release_notes> tags)
-# We remove the '#' comment characters to make it clean Markdown
-RELEASE_NOTES=$(sed -n '/<release_notes>/,/<\/release_notes>/p' "$MAIN_SCRIPT" | sed '1d;$d' | sed 's/^# //')
+# --- FUNCTIONS ---
 
-if [[ -z "$VERSION" ]]; then
-    echo "Error: Could not detect version in $MAIN_SCRIPT"
-    exit 1
-fi
+get_file_version() {
+    local file=$1
+    if [[ -f "$file" ]]; then
+        # Try to find "# Version: X.Y.Z"
+        grep -i "^# Version:" "$file" | head -n 1 | awk '{print $3}'
+    else
+        echo "N/A"
+    fi
+}
 
-echo "   Detected Version: $VERSION"
+get_git_status() {
+    local file=$1
+    # Check if ignored
+    if git check-ignore -q "$file"; then
+        echo "${RED}IGNORED (Local Only)${NC}"
+        return
+    fi
+    # Check if tracked
+    if git ls-files --error-unmatch "$file" &>/dev/null; then
+        echo "${GREEN}PUBLISHED${NC}"
+    else
+        echo "${YELLOW}UNTRACKED${NC}"
+    fi
+}
 
-# 2. GENERATE / UPDATE README.md
-echo ">> Updating $README_FILE..."
+command_list_status() {
+    echo -e "${CYAN}--- Project File Status ---${NC}"
+    printf "%-25s %-15s %-20s\n" "Filename" "Local Ver" "Git Status"
+    echo "--------------------------------------------------------------"
+    
+    for file in "${MANAGED_FILES[@]}"; do
+        local ver=$(get_file_version "$file")
+        local stat=$(get_git_status "$file")
+        printf "%-25s %-15s %b\n" "$file" "$ver" "$stat"
+    done
+    echo "--------------------------------------------------------------"
+    
+    # Show Last Release Info
+    LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null)
+    echo -e "Latest Git Tag: ${YELLOW}${LAST_TAG:-None}${NC}"
+}
 
-cat > "$README_FILE" <<EOF
-# Conduit Console & Optimizer Tools
-> **Repository:** [https://github.com/babakskr/Conduit-console](https://github.com/babakskr/Conduit-console)  
-> **Maintainer:** Babak Sorkhpour  
-> **Latest Version:** $VERSION
+command_deny_file() {
+    local file=$1
+    if [[ ! -f "$file" ]]; then echo "File not found: $file"; exit 1; fi
+    
+    echo -e ">> Blocking file from GitHub: ${RED}$file${NC}"
+    
+    # 1. Remove from Git index (keep local)
+    git rm --cached "$file" &>/dev/null
+    
+    # 2. Add to .gitignore if not exists
+    if ! grep -qxF "$file" .gitignore; then
+        echo "$file" >> .gitignore
+        echo "   Added to .gitignore"
+    fi
+    
+    echo "   File removed from tracking."
+}
 
-## 🛠 Project Tools Overview
+command_allow_file() {
+    local file=$1
+    if [[ ! -f "$file" ]]; then echo "File not found: $file"; exit 1; fi
 
-| Tool File | Description | Usage |
-| :--- | :--- | :--- |
-| \`conduit-optimizer.sh\` | Performance tuner for Docker & Native instances. Adjusts CPU/IO Priority. | \`sudo ./conduit-optimizer.sh -h\` |
-| \`AI_DEV_GUIDELINES.md\` | Protocol and System Prompts for AI-assisted development (En/Fa). | Reference Doc |
-| \`git_op.sh\` | Automated Release Manager & README Generator. | \`./git_op.sh\` |
+    echo -e ">> Allowing file to GitHub: ${GREEN}$file${NC}"
+    
+    # 1. Remove from .gitignore (Use sed to delete line matching filename exactly)
+    sed -i "/^$(basename $file)$/d" .gitignore
+    
+    # 2. Add to Git
+    git add "$file"
+    echo "   Added to git staging."
+}
 
-## 🚀 How to Use: Conduit Optimizer
+command_release() {
+    echo -e "${CYAN}>> Starting Release Process...${NC}"
+    
+    # 1. Determine Repo Version (From Main Product)
+    # If conduit-console.sh doesn't exist, fallback to date or manual
+    REPO_VER=$(get_file_version "$MAIN_PRODUCT")
+    if [[ "$REPO_VER" == "N/A" ]]; then
+        REPO_VER="v$(date +%Y.%m.%d)"
+        echo -e "${YELLOW}Warning: Main product version not found. Using date: $REPO_VER${NC}"
+    else
+        # Ensure it has 'v' prefix
+        if [[ "$REPO_VER" != v* ]]; then REPO_VER="v$REPO_VER"; fi
+    fi
+    
+    echo -e "   Target Release Version: ${GREEN}$REPO_VER${NC}"
 
-The optimizer intelligently adjusts the Linux Priority (PRI) of your running Conduit processes to prevent lag.
+    # 2. Generate Release Notes
+    # Scan all allowed files for <component_release_notes> block
+    RELEASE_BODY="## 🚀 Release $REPO_VER"
+    RELEASE_BODY+=$'\n\nThis release includes updates to the following components:\n'
 
-### Installation
-\`\`\`bash
-git clone https://github.com/babakskr/Conduit-console.git
-cd Conduit-console
-chmod +x conduit-optimizer.sh
-\`\`\`
+    CHANGES_DETECTED=0
 
-### Basic Usage (Default Mode)
-Automatically sets **Docker to PRI 10** (High) and **Native to PRI 15** (Medium-High).
-\`\`\`bash
-sudo ./conduit-optimizer.sh
-\`\`\`
+    for file in "${MANAGED_FILES[@]}"; do
+        # Skip if ignored
+        if git check-ignore -q "$file"; then continue; fi
+        
+        # Check if file is modified or staged
+        if ! git diff --quiet "$file" || ! git diff --cached --quiet "$file"; then
+             CHANGES_DETECTED=1
+             # Extract notes
+             NOTES=$(sed -n '/<component_release_notes>/,/<\/component_release_notes>/p' "$file" | sed '1d;$d' | sed 's/^# //')
+             
+             if [[ -n "$NOTES" ]]; then
+                 RELEASE_BODY+=$'\n### 📄 '"$file"$'\n'"$NOTES"$'\n'
+             fi
+        fi
+    done
 
-### Custom Usage (CLI Arguments)
-You can manually set the target Priority (Range 5-20). 
-*Lower value = Higher Priority in manual input? No, we follow Linux PRI logic:*
-* **10**: Very High Priority (Nice -10)
-* **20**: Normal Priority (Nice 0)
+    if [[ $CHANGES_DETECTED -eq 0 ]]; then
+        echo -e "${YELLOW}No changes detected in managed files. Nothing to release.${NC}"
+        # Force push option? For now, exit.
+        exit 0
+    fi
 
-\`\`\`bash
-# Example: Set Docker to PRI 10 and Native to PRI 18 (almost normal)
-sudo ./conduit-optimizer.sh -dock 10 -srv 18
+    echo -e "   Release Notes Generated."
 
-# Example: Skip Docker, only optimize Service to PRI 5 (Maximum Power)
-sudo ./conduit-optimizer.sh -dock 0 -srv 5
+    # 3. Git Operations
+    git add .
+    git commit -m "release: $REPO_VER"
+    git tag -a "$REPO_VER" -m "Release $REPO_VER"
+    
+    echo -e ">> Pushing to Remote..."
+    git push origin main
+    git push origin "$REPO_VER"
+    
+    # 4. Create GitHub Release
+    if command -v gh &> /dev/null; then
+        echo -e ">> Publishing to GitHub Releases..."
+        gh release create "$REPO_VER" --title "Release $REPO_VER" --notes "$RELEASE_BODY"
+        echo -e "${GREEN}✅ Done!${NC}"
+    else
+        echo -e "${YELLOW}GitHub CLI (gh) not found. Tags pushed, please draft release manually.${NC}"
+        echo -e "Notes:\n$RELEASE_BODY"
+    fi
+}
 
-# Get Help
-./conduit-optimizer.sh -h
-\`\`\`
+# --- MAIN EXECUTION ---
 
-## 📜 Latest Release Notes ($VERSION)
-$RELEASE_NOTES
-
----
-*Auto-generated by git_op.sh*
-EOF
-
-# 3. GIT OPERATIONS
-echo ">> Staging files..."
-git add .
-
-echo ">> Committing..."
-git commit -m "release: v$VERSION - updated optimizer logic and docs"
-
-echo ">> Tagging v$VERSION..."
-git tag -a "v$VERSION" -m "Automated Release v$VERSION"
-
-echo ">> Pushing to GitHub..."
-git push origin main
-git push origin "v$VERSION"
-
-# 4. GITHUB RELEASE (VIA CLI)
-if command -v gh &> /dev/null; then
-    echo ">> Creating GitHub Release..."
-    gh release create "v$VERSION" \
-       --title "Release v$VERSION" \
-       --notes "$RELEASE_NOTES"
-    echo "✅ Release Published Successfully!"
-else
-    echo "⚠️  GitHub CLI (gh) not installed. Pushed tags only."
-fi
+case "$1" in
+    -l|--list)
+        command_list_status
+        ;;
+    -no)
+        if [[ -z "$2" ]]; then echo "Error: Specify filename."; exit 1; fi
+        command_deny_file "$2"
+        ;;
+    -yes)
+        if [[ -z "$2" ]]; then echo "Error: Specify filename."; exit 1; fi
+        command_allow_file "$2"
+        ;;
+    *)
+        # Default: Run Release
+        command_release
+        ;;
+esac
