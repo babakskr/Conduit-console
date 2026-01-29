@@ -5,3 +5,5 @@ conduit-console.bak
 conduit-console.config.json
 docker-instances/
 .DS_Store
+conduit-git-info.sh
+conduit-github-release.sh
