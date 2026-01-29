@@ -3,11 +3,11 @@
 # Script: Git Operations Manager (Core Release Tool)
 # Repository: https://github.com/babakskr/Conduit-console.git
 # Author: Babak Sorkhpour
-# Version: 1.8.1
+# Version: 1.9.0
 #
 # Compliance:
-# - Fixes: Ensures README.md is committed and pushed to 'main' branch properly.
-# - Feature: Forces checkout to main/master before release to ensure docs are visible.
+# - Fixes: "Everything up-to-date" error by pushing the CURRENT active branch.
+# - Feature: Dynamic branch detection (works on main, stable, dev, etc.).
 # - Implements KR-008 (Strict Help Standard).
 # ==============================================================================
 
@@ -16,7 +16,6 @@ IFS=$'\n\t'
 
 # Core tracking
 MAIN_PRODUCT="conduit-console.sh"
-PRIMARY_BRANCH="main"
 
 # Colors
 GREEN='\033[0;32m'
@@ -36,12 +35,12 @@ show_version() {
 
 show_help() {
     echo -e "${CYAN}Git Operations Manager (git_op)${NC}"
-    echo "Description: Automates version control, README generation, and GitHub releases."
+    echo "Description: Automates version control, Professional README generation, and GitHub releases."
     echo ""
     echo -e "${YELLOW}Usage:${NC} ./git_op.sh [OPTION] [FILE...]"
     echo ""
     echo "Options:"
-    echo "  (No Args)       Trigger a full release (Update README, Tag, Commit, Push)."
+    echo "  (No Args)       Trigger a full release on the CURRENT branch."
     echo "  -l              List status of tracked files."
     echo "  -no <files...>  Block files (Add to .gitignore & Remove from GitHub)."
     echo "  -yes <files...> Allow files (Remove from .gitignore & Add to Git)."
@@ -49,7 +48,7 @@ show_help() {
     echo "  -h              Show this help message."
     echo ""
     echo -e "${YELLOW}Examples:${NC}"
-    echo "  1. Release a new version (Force updates README on main):"
+    echo "  1. Release a new version (Auto-detects branch & updates README):"
     echo "     ./git_op.sh"
     echo ""
 }
@@ -116,17 +115,20 @@ extract_desc() {
 generate_dynamic_readme() {
     echo -e ">> Generating professional ${CYAN}README.md${NC}..."
     local readme="README.md"
-    
     local project_ver
     project_ver=$(get_file_version "$MAIN_PRODUCT")
     
+    # Get current branch for badges
+    local branch_name
+    branch_name=$(git rev-parse --abbrev-ref HEAD)
+
     cat > "$readme" <<EOF
 # Conduit Console Manager
 
 ![Version](https://img.shields.io/badge/version-v${project_ver}-blue?style=flat-square)
+![Branch](https://img.shields.io/badge/branch-${branch_name}-purple?style=flat-square)
 ![Platform](https://img.shields.io/badge/platform-Linux-green?style=flat-square)
 ![License](https://img.shields.io/badge/license-GPLv3-orange?style=flat-square)
-![Bash](https://img.shields.io/badge/language-Bash-4EAA25?style=flat-square&logo=gnu-bash&logoColor=white)
 
 > **Professional TUI for Conduit Management** > A unified console to manage Native (Systemd) and Docker instances.
 
@@ -229,7 +231,9 @@ EOF
 command_list_status() {
     echo -e "${CYAN}--- Project Core Status ---${NC}"
     echo ">> Fetching remote status..."
-    git fetch origin "$PRIMARY_BRANCH" >/dev/null 2>&1
+    local branch
+    branch=$(git rev-parse --abbrev-ref HEAD)
+    git fetch origin "$branch" >/dev/null 2>&1
     
     printf "%-30s %-10s %-25s %-15s\n" "Filename" "Ver" "Local Git Status" "Remote"
     echo "-------------------------------------------------------------------------------------"
@@ -243,7 +247,7 @@ command_list_status() {
         raw_stat=$(git status --porcelain "$item" | awk '{print $1}' | head -n1)
         if [[ -z "$raw_stat" ]]; then l_stat="${GREEN}Clean${NC}"; else l_stat="${YELLOW}Modified${NC}"; fi
         local r_stat="${RED}MISSING${NC}"
-        if git ls-tree -r origin/"$PRIMARY_BRANCH" --name-only 2>/dev/null | grep -q "^$item"; then r_stat="${GREEN}SYNCED${NC}"; fi
+        if git ls-tree -r origin/"$branch" --name-only 2>/dev/null | grep -q "^$item"; then r_stat="${GREEN}SYNCED${NC}"; fi
         printf "%-30s %-10s %-35b %-20b\n" "$item" "${ver:-}" "$l_stat" "$r_stat"
     done
     echo "-------------------------------------------------------------------------------------"
@@ -266,10 +270,13 @@ command_allow_file() {
 }
 
 command_release() {
-    # 0. Sync Branch (Fix for detached/desync issues)
-    echo ">> Ensuring on $PRIMARY_BRANCH branch..."
-    git checkout "$PRIMARY_BRANCH" 2>/dev/null || git checkout -b "$PRIMARY_BRANCH"
-    git pull origin "$PRIMARY_BRANCH" 2>/dev/null || echo "   (Pull skipped/failed, continuing...)"
+    # 0. Identify Branch
+    local current_branch
+    current_branch=$(git rev-parse --abbrev-ref HEAD)
+    echo -e ">> Working on branch: ${CYAN}$current_branch${NC}"
+
+    # Sync (Pull)
+    git pull origin "$current_branch" 2>/dev/null || echo "   (Pull skipped/failed, continuing...)"
 
     # 1. Versioning
     local raw_ver
@@ -290,11 +297,11 @@ command_release() {
         git add "$MAIN_PRODUCT"
     fi
     
-    # 2. GENERATE README (CRITICAL: Must happen before commit)
+    # 2. GENERATE README (Includes correct branch badge)
     generate_dynamic_readme
     git add README.md
     
-    # 3. Commit Content
+    # 3. Commit
     git add .
     local release_body="## 🚀 Release $target_tag"
     release_body="${release_body}"$'\n\nAutomated release via git_op.sh\n'
@@ -309,18 +316,16 @@ command_release() {
          fi
     done < <(git grep -l "<component_release_notes>")
     
-    # Check if anything to commit (including README)
     if git diff --cached --quiet; then
         echo -e "${YELLOW}No changes detected to release.${NC}"
-         # If version didn't change and no files changed, exit
         if [[ "$next_ver" == "${raw_ver#v}" ]]; then exit 0; fi
     fi
 
     git commit -m "release: $target_tag (Docs Updated)"
     
-    # 4. Push to Main FIRST (Ensures README is on front page)
-    echo ">> Pushing code & docs to $PRIMARY_BRANCH..."
-    git push origin "$PRIMARY_BRANCH"
+    # 4. Push to CURRENT BRANCH
+    echo ">> Pushing code & docs to $current_branch..."
+    git push origin "$current_branch"
     
     # 5. Tag & Release
     git tag -a "$target_tag" -m "Release $target_tag"
