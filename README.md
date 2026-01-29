@@ -1,14 +1,44 @@
-Conduit Console ManagerConduit Console is a robust, terminal-based management dashboard for the Psiphon Conduit volunteer proxy node.This tool provides a native "Console" experience for server administrators, offering real-time status reports, action logs, and easier management of the Conduit service without needing complex manual commands.(Screenshots coming soon)✨ FeaturesNative Dashboard: A clean, text-based user interface (TUI) for monitoring your node.Action Reports: Detailed logs of node activities and interventions.Status Totals: Real-time aggregation of connection stats and bandwidth usage.Lightweight: Written purely in Shell, requiring minimal dependencies.Version Control: Built-in update checks and version tracking (currently v0.1.1).🚀 InstallationYou can install Conduit-console by cloning the repository directly to your server:# 1. Update your package list
-sudo apt update && sudo apt install git -y
+# Conduit Console Project
 
-# 2. Clone the repository
-git clone [https://github.com/babakskr/Conduit-console.git](https://github.com/babakskr/Conduit-console.git)
+> **Auto-Generated Documentation** > This project provides a set of tools for managing Conduit instances (Native & Docker) and optimizing system performance.
 
-# 3. Enter the directory and make it executable
+## 🛠 Project Tools & Utility Overview
+
+The following table serves as the **Single Source of Truth** for the tools included in this repository.
+It is automatically updated during every release.
+
+| File | Version | Description | Usage |
+| :--- | :--- | :--- | :--- |
+| `conduit-console.sh` | v0.2.7 | No description available. | `./conduit-console.sh [OPTIONS]` |
+| `conduit-optimizer.sh` | v- | - | `-` |
+| `AI_DEV_GUIDELINES.md` | v1.0.0-docs | No description available. | `-` |
+| `git_op.sh` | v1.7.0 | Automates version control, README generation, and GitHub releases. | `${NC} ./git_op.sh [OPTION] [FILE...]` |
+| `docs/` | DIR | Documentation and supplemental files. | Reference |
+
+## 🚀 Installation & Setup
+
+### Prerequisites
+* **Linux OS** (Ubuntu/Debian recommended)
+* **Root Privileges** (Required for service management and optimization)
+* **Git** & **Docker** (Optional, for Docker mode)
+
+### Quick Start
+```bash
+# 1. Clone the repository
+git clone https://github.com/babakskr/Conduit-console.git
 cd Conduit-console
-chmod +x conduit-console.sh
 
-# 4. Run the console
-./conduit-console.sh
-📖 UsageOnce installed, simply run the script to enter the main dashboard:./conduit-console.sh
-From the menu, you can access:Start/Stop the Conduit service.View Live Logs.Check Total Status (Connections/Bandwidth).Generate Action Reports.🤝 Credits & AcknowledgementsThis project is an independent management tool built upon the shoulders of giants. Special thanks to the core developers and the open-source community:ssmirr/conduit: The core Conduit server implementation. This project wraps the functionality provided by ssmirr's incredible work.SamNet-dev/conduit-manager: Inspiration for the management structure and automation flows.⚖️ LicenseThis project is licensed under the MIT License. See the LICENSE file for details.Disclaimer: This tool is not officially affiliated with Psiphon Inc. It is a community-driven manager for the volunteer Conduit network.
+# 2. Set permissions
+chmod +x *.sh
+
+# 3. Run the Main Console
+sudo ./conduit-console.sh
+```
+
+## 🔄 Update & Release Management
+This repository uses `git_op.sh` for automated releases.
+* To check status: `./git_op.sh -l`
+* To update/release: `./git_op.sh`
+
+---
+*Last Updated: Thu Jan 29 07:05:18 PM UTC 2026*
