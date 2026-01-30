@@ -7,7 +7,7 @@
 # Copyright (C) 2026 Babak Sorkhpour
 # Written by Dr. Babak Sorkhpour with help of ChatGPT
 #
-# Version: 0.2.23
+# Version: 0.2.24
 #
 # Key rules:
 # - Interactive TUI: DO NOT use `set -e`
