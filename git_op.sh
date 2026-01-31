@@ -3,13 +3,7 @@
 # Script: Git Operations Manager (Core Release Tool)
 # Repository: https://github.com/babakskr/Conduit-console.git
 # Author: Babak Sorkhpour
-# Version: 2.5.0
-#
-# Compliance:
-# - Feature: No-args releases on CURRENT branch.
-# - Feature: 'main' arg merges current branch to MAIN and releases.
-# - Feature: Explicitly tracks and lists 'docs/' contents in README.
-# - Safety: Sync-First policy enforced.
+# Version: 2.5.1
 # ==============================================================================
 
 set -u -o pipefail
@@ -73,7 +67,14 @@ show_help() {
 get_file_version() {
     local target=$1
     if [[ -d "$target" ]]; then echo "DIR"; elif [[ -f "$target" ]]; then
-        grep -iE "^# Version:|^> \*\*Version:\*\*" "$target" | head -n 1 | awk '{print $NF}' | tr -d 'v'
+        # Try finding "# Version:" or "> **Version:**"
+        local ver
+        ver=$(grep -iE "^# Version:|^> \*\*Version:\*\*" "$target" | head -n 1 | awk '{print $NF}' | tr -d 'v')
+        if [[ -z "$ver" ]]; then
+            # Fallback for some shell scripts using different spacing
+            ver=$(grep -i "# Version" "$target" | head -n 1 | awk '{print $NF}')
+        fi
+        echo "${ver:-Unknown}"
     else echo "-"; fi
 }
 
@@ -105,24 +106,42 @@ update_file_version() {
 
 extract_desc() {
     local file=$1
-    local desc="-"
+    local desc=""
+    local filename
+    filename=$(basename "$file")
+
     if [[ -f "$file" ]]; then
+        # Method 1: Look for explicit "# Description:" tag
         desc=$(grep -i "^# Description:" "$file" | head -n1 | cut -d: -f2- | sed 's/^[ \t]*//')
+        
+        # Method 2: Look for echo "Description: ..." in scripts
         if [[ -z "$desc" ]]; then
             desc=$(grep -i "echo.*Description:" "$file" | head -n1 | cut -d: -f2- | sed 's/^[ \t]*//' | tr -d '"')
         fi
+
+        # Method 3: Hardcoded Fallbacks (Fixed for docs/ paths)
         if [[ -z "$desc" ]]; then
-            # Fallbacks
-            case "$file" in
-                "KNOWN_RISKS.md") desc="Registry of known bugs and guards." ;;
-                "AI_HANDOFF.md")  desc="Operational log for AI collaboration." ;;
-                "AI_DEV_GUIDELINES.md") desc="Development rules and prompts." ;;
-                "AI_DEV_GUIDELINES_FA.md") desc="Development rules (Persian)." ;;
-                "ci-bash.yml")    desc="GitHub Actions CI config." ;;
+            case "$filename" in
+                "KNOWN_RISKS.md") desc="Registry of known bugs and operational guards." ;;
+                "AI_HANDOFF.md")  desc="Operational log for AI collaboration & handoff." ;;
+                "AI_DEV_GUIDELINES.md") desc="Development rules, prompts, and standards." ;;
+                "AI_DEV_GUIDELINES_FA.md") desc="Development rules (Persian Language)." ;;
+                "ci-bash.yml")    desc="GitHub Actions CI configuration." ;;
                 "project.conf")   desc="Central configuration file." ;;
+                "conduit-console.sh") desc="Main management console interface." ;;
+                "conduit-optimizer.sh") desc="System resource and Docker optimizer." ;;
+                "conduit-manager.sh") desc="Network and security management suite." ;;
             esac
         fi
+
+        # Method 4: Read first H1 header as description if it's a markdown file
+        if [[ -z "$desc" && "$file" == *.md ]]; then
+             local header
+             header=$(grep "^# " "$file" | head -n 1 | sed 's/^# //')
+             if [[ -n "$header" ]]; then desc="Documentation: $header"; fi
+        fi
     fi
+    
     echo "${desc:-No description provided.}"
 }
 
