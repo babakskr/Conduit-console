@@ -1,0 +1,57 @@
+
+=== A/B test start ===
+Repository: /tmp/Conduit-console
+Timestamp: 2026-02-15T03:33:10+01:00
+
+=== A: Strict contracts ===
+[PASS] exists: docs/BDD_GHERKIN_STANDARDS.md
+[PASS] exists: tests/bdd/README.md
+[PASS] conduit-console uses strict mode
+[PASS] project.conf is sourced
+[PASS] docker restart policy is unless-stopped
+[FAIL] no docker-compose usage in core console
+[PASS] docker inspect is used for runtime parsing
+[PASS] help function exists in conduit-console
+[PASS] git_op contains README generation logic
+[PASS] bash -n conduit-console.sh
+[PASS] bash -n conduit-optimizer.sh
+[PASS] bash -n lb-wizard.sh
+[PASS] bash -n git_op.sh
+[PASS] feature has scenarios: tests/bdd/features/00-project-governance.feature
+[FAIL] G/W/T present in scenarios: tests/bdd/features/00-project-governance.feature
+[PASS] feature has scenarios: tests/bdd/features/01-dashboard-stability.feature
+[FAIL] G/W/T present in scenarios: tests/bdd/features/01-dashboard-stability.feature
+[PASS] feature has scenarios: tests/bdd/features/02-ui-helpers-and-unbound-vars.feature
+[FAIL] G/W/T present in scenarios: tests/bdd/features/02-ui-helpers-and-unbound-vars.feature
+[PASS] feature has scenarios: tests/bdd/features/03-docker-performance-and-source-of-truth.feature
+[FAIL] G/W/T present in scenarios: tests/bdd/features/03-docker-performance-and-source-of-truth.feature
+[PASS] feature has scenarios: tests/bdd/features/04-docker-lifecycle-standards.feature
+[FAIL] G/W/T present in scenarios: tests/bdd/features/04-docker-lifecycle-standards.feature
+[PASS] feature has scenarios: tests/bdd/features/05-help-and-docs.feature
+[FAIL] G/W/T present in scenarios: tests/bdd/features/05-help-and-docs.feature
+[PASS] feature has scenarios: tests/bdd/features/06-security-input-validation.feature
+[FAIL] G/W/T present in scenarios: tests/bdd/features/06-security-input-validation.feature
+[PASS] feature has scenarios: tests/bdd/features/07-release-and-upstream-tracking.feature
+[FAIL] G/W/T present in scenarios: tests/bdd/features/07-release-and-upstream-tracking.feature
+
+=== B: Logic + understandability ===
+[PASS] scenario prefixes are present
+[PASS] KR tags are present
+[PASS] average step length is readable (7.62 words)
+[PASS] tags present: tests/bdd/features/00-project-governance.feature
+[PASS] tags present: tests/bdd/features/01-dashboard-stability.feature
+[PASS] tags present: tests/bdd/features/02-ui-helpers-and-unbound-vars.feature
+[PASS] tags present: tests/bdd/features/03-docker-performance-and-source-of-truth.feature
+[PASS] tags present: tests/bdd/features/04-docker-lifecycle-standards.feature
+[PASS] tags present: tests/bdd/features/05-help-and-docs.feature
+[PASS] tags present: tests/bdd/features/06-security-input-validation.feature
+[PASS] tags present: tests/bdd/features/07-release-and-upstream-tracking.feature
+[PASS] dashboard loop implementation exists
+[PASS] running-only docker listing function exists
+[PASS] docker log tail collection exists
+[PASS] stats cache concept exists
+[PASS] docs declare README generation policy
+
+=== Summary ===
+PASS=36 FAIL=9
+RESULT=FAILED
